@@ -1145,51 +1145,45 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-// Manual update check (Help → Check for Update…): a direct GitHub Releases
-// lookup, separate from the silent auto-updater. Works in dev builds too.
-let lastReleaseUrl = null;
-
-function compareVersions(a, b) {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] || 0, nb = pb[i] || 0;
-    if (na !== nb) return na - nb;
-  }
-  return 0;
+// Help → Check for Update… shares state with the quiet startup check.
+const { createUpdates } = require('./updates');
+let updates;
+function getUpdates() {
+  if (updates) return updates;
+  // Portable Windows builds and unpackaged runs need a manual download.
+  const canInstall = app.isPackaged && !process.env.PORTABLE_EXECUTABLE_FILE &&
+    (process.platform !== 'linux' || !!process.env.APPIMAGE);
+  const updater = canInstall ? require('electron-updater').autoUpdater : null;
+  updates = createUpdates({
+    updater,
+    currentVersion: app.getVersion(),
+    fetchRelease: async () => {
+      const res = await fetch('https://api.github.com/repos/hughhowey/neo/releases/latest', {
+        headers: { 'User-Agent': 'NEO-App' },
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!res.ok) throw new Error('GitHub API returned ' + res.status);
+      const data = await res.json();
+      const version = String(data.tag_name || '').replace(/^v/, '');
+      if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error('Invalid release version');
+      return version;
+    },
+    onState: (state) => {
+      for (const win of BrowserWindow.getAllWindows()) win.webContents.send('update:state', state);
+    },
+    onError: (err) => logError('updater', err)
+  });
+  return updates;
 }
 
-// toggling at the session level forces the engine to re-scan visible text —
-// newer Chromium ignores attribute changes on text it has already looked at
 ipcMain.handle('app:version', () => app.getVersion());
-
-ipcMain.handle('update:check', async () => {
-  try {
-    const res = await fetch('https://api.github.com/repos/hughhowey/neo/releases/latest', {
-      headers: { 'User-Agent': 'NEO-App' }
-    });
-    if (!res.ok) throw new Error('GitHub API returned ' + res.status);
-    const data = await res.json();
-    const latestVersion = String(data.tag_name || '').replace(/^v/, '');
-    const currentVersion = app.getVersion();
-    lastReleaseUrl = data.html_url || null;
-    return {
-      hasUpdate: !!latestVersion && compareVersions(latestVersion, currentVersion) > 0,
-      latestVersion,
-      currentVersion
-    };
-  } catch (err) {
-    logError('update', err);
-    return { error: true };
-  }
-});
-
-// the renderer may only open the release page fetched above — never arbitrary URLs
+ipcMain.handle('update:state', () => getUpdates().getState());
+ipcMain.handle('update:check', () => getUpdates().check());
+ipcMain.handle('update:download', () => getUpdates().download());
+// The renderer awaits its save writes before requesting installation.
+ipcMain.handle('update:install', () => getUpdates().install());
 ipcMain.handle('update:openRelease', () => {
-  if (lastReleaseUrl && /^https:\/\/github\.com\//.test(lastReleaseUrl)) {
-    require('electron').shell.openExternal(lastReleaseUrl);
-  }
-  return true;
+  return require('electron').shell.openExternal('https://github.com/hughhowey/neo/releases/latest');
 });
 
 // Two copies of NEO editing the same library is how words get eaten
@@ -1205,19 +1199,9 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-// Auto-update from GitHub releases. Deliberately defensive: any failure is
-// logged and swallowed, so an unsigned build or offline machine never notices.
-// (macOS auto-update only works once the app is code-signed.)
+// No notifications or automatic installation while someone is writing.
 function checkForUpdates() {
-  if (!app.isPackaged) return;
-  try {
-    const { autoUpdater } = require('electron-updater');
-    autoUpdater.logger = null;
-    autoUpdater.on('error', (err) => logError('updater', err));
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => logError('updater', err));
-  } catch (err) {
-    logError('updater', err);
-  }
+  if (app.isPackaged) getUpdates().check().catch((err) => logError('updater', err));
 }
 
 app.whenReady().then(() => {

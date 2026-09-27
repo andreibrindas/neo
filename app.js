@@ -5185,27 +5185,167 @@ async function doEmailDraft() {
   else toast('Mail unavailable — snapshot saved to your Exports folder instead');
 }
 
-// Help → Check for Update…: on-demand release lookup, only ever runs on a click
+// Await every write before handing control to the installer. Ordinary autosave
+// is debounced and doesn't wait for disk acknowledgements.
+async function saveBeforeUpdate() {
+  if (!library) throw new Error('The library is still loading');
+  const writes = [];
+  if (book) {
+    for (const chId of book.chapterOrder) {
+      clearTimeout(saveTimers[chId]);
+      const body = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
+      if (body) chapterHTML[chId] = captureBody(body);
+      if (chapterHTML[chId] !== undefined) writes.push(window.neo.writeChapter(book.id, chId, chapterHTML[chId]));
+    }
+    clearTimeout(saveTimers.aux);
+    clearTimeout(saveTimers.meta);
+    clearTimeout(saveTimers.stickies);
+    // Write the visible notes even if a blur-triggered save cleared auxDirty.
+    const aux = $('#aux-editor');
+    if (aux.dataset.kind) writes.push(window.neo.writeAux(book.id, aux.dataset.kind, aux.innerHTML));
+    book.lastPosition = { chapterId: currentChapterId, scroll: $('#paper-scroll').scrollTop };
+    writes.push(window.neo.writeBookMeta(book.id, book));
+    writes.push(window.neo.writeJSON(book.id, 'stickies', stickies));
+    writes.push(window.neo.writeJSON(book.id, 'darlings', darlings));
+  }
+  writes.push(window.neo.writeLibrary(library));
+  await Promise.all(writes);
+}
+
+// Only Help → Check for Update… opens this dialog. Closing it leaves any
+// download running; opening it again shows the current progress.
+let updateDialog = null;
 async function checkForUpdate() {
-  const res = await window.neo.checkForUpdate();
-  if (res.error) { toast("Couldn't check for updates — try again later"); return; }
-  if (!res.hasUpdate) { toast(`You're on the latest version (${res.currentVersion})`); return; }
+  if (updateDialog) { updateDialog.focus(); return; }
   const bd = document.createElement('div');
   bd.className = 'modal-backdrop';
   bd.innerHTML = `
-    <div class="modal" style="width:380px">
-      <h2 style="font-size:16px">NEO ${res.latestVersion} is available</h2>
-      <p>You have ${res.currentVersion}.</p>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="update-title" style="width:480px" tabindex="-1">
+      <h2 id="update-title" style="font-size:16px">NEO updates</h2>
+      <p class="update-message" role="status" aria-live="polite">Checking for updates…</p>
+      <progress class="update-progress" aria-label="Update download" max="100" style="width:100%" hidden></progress>
       <div style="text-align:right;margin-top:14px">
-        <button class="m-cancel btn-quiet" style="margin-right:10px">Later</button>
-        <button class="m-ok btn-gold">View Release</button>
+        <button class="m-cancel btn-quiet" style="margin-right:10px">Close</button>
+        <button class="update-release btn-quiet" style="margin-right:10px" hidden>View Release</button>
+        <button class="m-ok btn-gold" hidden></button>
       </div>
     </div>`;
+  const previousFocus = document.activeElement;
   document.body.appendChild(bd);
-  const close = () => bd.remove();
-  bd.querySelector('.m-cancel').onclick = close;
-  bd.querySelector('.m-ok').onclick = () => { window.neo.openRelease(); close(); };
-  bd.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } });
+  const modal = bd.querySelector('.modal');
+  updateDialog = modal;
+  // Keep keyboard focus and edits in this dialog, including during the save.
+  const siblings = [...document.body.children].filter((el) => el !== bd);
+  const inertBefore = siblings.map((el) => el.inert);
+  siblings.forEach((el) => { el.inert = true; });
+  const message = bd.querySelector('.update-message');
+  const progress = bd.querySelector('.update-progress');
+  const action = bd.querySelector('.m-ok');
+  const release = bd.querySelector('.update-release');
+  const cancel = bd.querySelector('.m-cancel');
+  let state = {};
+  let saving = false;
+  let closed = false;
+  const render = (next) => {
+    if (closed) return;
+    state = next;
+    if (saving && state.status !== 'error') return;
+    saving = false;
+    cancel.disabled = state.status === 'restarting';
+    action.disabled = false;
+    action.hidden = true;
+    progress.hidden = state.status !== 'downloading';
+    release.hidden = !['available', 'error', 'downloaded'].includes(state.status);
+    if (state.status === 'available') {
+      message.textContent = `NEO ${state.latestVersion} is available. You have ${state.currentVersion}.`;
+      if (state.canInstall) {
+        action.textContent = 'Download update';
+        action.hidden = false;
+      } else {
+        message.textContent += ' This build needs a manual download from the release page.';
+      }
+    } else if (state.status === 'downloading') {
+      const percent = Math.floor(state.percent || 0);
+      progress.value = percent;
+      message.textContent = `Downloading NEO ${state.latestVersion}: ${percent}%. You can close this window and keep writing.`;
+    } else if (state.status === 'downloaded') {
+      message.textContent = `NEO ${state.latestVersion} is ready. Your work will be saved before restarting.`;
+      action.textContent = 'Restart to update';
+      action.hidden = false;
+    } else if (state.status === 'current') {
+      message.textContent = `You're on the latest version (${state.currentVersion}).`;
+    } else if (state.status === 'error') {
+      message.textContent = state.error;
+      action.textContent = 'Try again';
+      action.hidden = false;
+    } else if (state.status === 'restarting') {
+      message.textContent = 'Restarting NEO…';
+    } else {
+      message.textContent = 'Checking for updates…';
+    }
+  };
+  const unsubscribe = window.neo.onUpdateState(render);
+  const close = () => {
+    if (saving || state.status === 'restarting') return;
+    closed = true;
+    unsubscribe();
+    siblings.forEach((el, i) => { el.inert = inertBefore[i]; });
+    bd.remove();
+    updateDialog = null;
+    previousFocus?.focus();
+  };
+  const request = async (fn) => {
+    action.disabled = true;
+    try { render(await fn()); }
+    catch {
+      render({ ...state, status: 'error', error: "Couldn't contact the updater. Try again or download the release from GitHub." });
+    }
+  };
+  cancel.onclick = close;
+  release.onclick = async () => {
+    try { await window.neo.openRelease(); }
+    catch { message.textContent = "Couldn't open GitHub. Visit github.com/hughhowey/neo/releases in your browser."; }
+  };
+  action.onclick = async () => {
+    if (state.status === 'downloaded') {
+      saving = true;
+      action.disabled = true;
+      cancel.disabled = true;
+      message.textContent = 'Saving your work…';
+      try { await saveBeforeUpdate(); }
+      catch {
+        saving = false;
+        cancel.disabled = false;
+        action.disabled = false;
+        message.textContent = "Couldn't save your work. NEO will stay open. Check that your library folder is writable, then try again.";
+        return;
+      }
+      saving = false;
+      await request(() => window.neo.installUpdate());
+    } else {
+      await request(() => state.status === 'available' ? window.neo.downloadUpdate() : window.neo.checkForUpdate());
+    }
+  };
+  bd.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+    if (e.key === 'Tab') {
+      const buttons = [...bd.querySelectorAll('button')].filter((b) => !b.hidden && !b.disabled);
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (!first) { e.preventDefault(); return; }
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === modal)) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && (document.activeElement === last || document.activeElement === modal)) {
+        e.preventDefault(); first.focus();
+      }
+    }
+  });
+  modal.focus();
+  await request(async () => {
+    const current = await window.neo.updateState();
+    if (closed) return current;
+    if (['idle', 'current', 'error'].includes(current.status)) return window.neo.checkForUpdate();
+    return current;
+  });
 }
 
 // Help → About NEO: the version, plainly
