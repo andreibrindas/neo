@@ -23,6 +23,7 @@ on:
       - 'pocket/**'
       - 'app.js'
       - 'covers.js'
+      - 'characters.js'
       - 'styles.css'
       - 'fonts/**'
       - 'i18n.js'
@@ -70,6 +71,7 @@ jobs:
           npm install
           cp ../app.js www/app.js
           cp ../covers.js www/covers.js
+          cp ../characters.js www/characters.js
           cp ../styles.css www/styles.css
           cp ../i18n.js www/i18n.js
           cp ../node_modules/jszip/dist/jszip.min.js www/jszip.min.js

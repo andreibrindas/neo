@@ -39,6 +39,16 @@ A new feature added in v0.8.0: the "Poetry Paragraph." If you SHIFT + ENTER, you
 
 I used to type XXX in drafts when I needed to change something later (or look something up, or verify some continuity). Now, you can just hit ⌘⇧X instead. NEO drops a little mark, makes a sticky note in the margin for later, and you keep writing. The chapter list shows a red dot everywhere you left a sticky. The notes are on the hidden right panel any time you need to look for something to fix.
 
+**When a character needs a name later**
+
+Type `[[C]]` or `[[the tailor]]`. When you close the brackets, only the label remains in your prose, with a faint underline. Repeat the same reference anywhere in the book to share one character note. Ordinary names and email addresses stay ordinary text.
+
+Cmd+Shift+C on Mac, or Ctrl+Shift+C elsewhere, inserts `[[]]` with the caret in the middle. Type the label and press Tab, or type the closing brackets, to finish. References are case-sensitive.
+
+With the caret beside the character, Cmd+Shift+X or Ctrl+Shift+X opens its note in the existing right panel. Type your note and press Enter to return to the same place. Shift+Enter adds a line. Shift+Tab moves to the name field; entering a name and pressing Enter updates every linked occurrence. Original passages go to Darlings, and Cmd+Z or Ctrl+Z immediately undoes the rename. You can still type `[[C]]` afterward to insert the chosen name.
+
+The hidden right panel has separate Notes and Characters tabs. The note shortcut opens the appropriate tab automatically. Exports contain the displayed names, without brackets or underlines. Paragraph centering remains in Format → Align Paragraph → Center.
+
 **Darlings**
 
 Kill your darlings, they say. Well, it never gets easy. You're a writer, and we all secretly believe the last good sentence we wrote is the last good sentence we'll ever write.

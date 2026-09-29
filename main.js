@@ -1263,6 +1263,10 @@ function buildMenu() {
           click: () => sendToWindow({ type: 'find' })
         },
         {
+          label: t('Character reference'), accelerator: 'CmdOrCtrl+Shift+C',
+          click: () => sendToWindow({ type: 'characterReference' })
+        },
+        {
           label: t('Spellcheck Pass'),
           accelerator: 'CmdOrCtrl+;',
           click: () => sendToWindow({ type: 'spellcheck' })
@@ -1306,7 +1310,7 @@ function buildMenu() {
           label: t('Align Paragraph'),
           submenu: [
             { label: t('Left'), accelerator: 'CmdOrCtrl+Shift+L', click: () => sendToWindow({ type: 'align', value: 'left' }) },
-            { label: t('Center'), accelerator: 'CmdOrCtrl+Shift+C', click: () => sendToWindow({ type: 'align', value: 'center' }) },
+            { label: t('Center'), click: () => sendToWindow({ type: 'align', value: 'center' }) },
             { label: t('Right'), accelerator: 'CmdOrCtrl+Shift+R', click: () => sendToWindow({ type: 'align', value: 'right' }) },
             { label: t('Justify'), accelerator: 'CmdOrCtrl+Shift+J', click: () => sendToWindow({ type: 'align', value: 'justify' }) }
           ]

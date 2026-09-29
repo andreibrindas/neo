@@ -599,6 +599,21 @@ body.bright .spell-menu button { color: #eee; }
   line-height: 1.7; text-align: center;
 }
 
+/* A linked character reads like prose. Its marker has no fill or badge. */
+.character-ref { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 18%, transparent); text-underline-offset: 0.18em; text-decoration-thickness: 1px; cursor: text; }
+.character-ref:hover { text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+.character-note { border-left-color: #55534b; }
+.character-name-label { display: block; color: #8a8a80; font-size: 10px; margin: 10px 0; }
+.character-name { display: block; width: 100%; background: transparent; border: 0; border-bottom: 1px solid #444239; padding: 5px 0; color: #ccc; font: 14px Georgia, serif; outline: none; }
+.character-name:focus { border-bottom-color: var(--accent); }
+.character-name::placeholder { color: #99958a; }
+.character-key-hint { display: none; color: #8a8a80; font-size: 10px; line-height: 1.6; margin: 5px 0; }
+.character-note:focus-within .character-key-hint { display: block; }
+.character-places { margin-top: 8px; font-size: 11px; color: #8a8a80; }
+.character-places summary { cursor: pointer; }
+.character-places button { background: none; border: 0; color: #aaa69b; font-size: 11px; padding: 7px 8px 0 0; }
+.character-places button:hover { color: var(--accent); }
+
 /* Ghost paragraphs: outline notes waiting in the manuscript to become prose */
 .chapter-body p.ghost {
   color: #a9a294; font-style: italic; text-indent: 0 !important;
@@ -687,6 +702,15 @@ body.bright .spell-menu button { color: #eee; }
   background: none; border: none; color: #555; font-size: 15px;
 }
 #side-pin.pinned { color: var(--accent); }
+#side-tabs { display: flex; gap: 14px; min-width: 0; margin: 0 16px 14px; }
+#side-tabs button {
+  background: none; border: 0; border-bottom: 1px solid transparent;
+  padding: 0 0 7px; color: #777; font-size: 11px; letter-spacing: 0.7px;
+}
+#side-tabs button[aria-selected="true"] { color: #ccc; border-bottom-color: var(--accent); }
+#side-tabs button:hover { color: #ddd; }
+#side-tabs button:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+.sticky.character-note .s-ch { text-transform: none; }
 .sticky {
   margin: 0 12px 12px; background: #2a2a26; border-radius: 6px;
   padding: 10px 12px; font-size: 13px; line-height: 1.45; color: #ccc;
@@ -696,8 +720,16 @@ body.bright .spell-menu button { color: #eee; }
 .sticky .s-ch { font-size: 10px; color: #777; text-transform: uppercase; letter-spacing: 1px; }
 .sticky textarea {
   width: 100%; background: none; border: none; color: #ddd; font: inherit;
-  resize: vertical; min-height: 34px; outline: none;
+  resize: none; overflow: hidden; min-height: 34px; outline: none;
 }
+.note-expand {
+  display: flex; align-items: center; justify-content: center; width: 100%;
+  min-height: 22px; padding: 2px 0; background: none; border: 0; color: #99958a;
+}
+.note-expand svg { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.note-expand[aria-expanded="true"] svg { transform: rotate(180deg); }
+.note-expand:hover { color: var(--accent); }
+.note-expand:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
 .sticky .s-actions { text-align: right; }
 .sticky .s-actions button {
   background: none; border: none; color: #666; font-size: 11px;

@@ -79,10 +79,15 @@
     <div id="side-hotzone"></div>
     <aside id="side-pane">
       <div id="side-head">
-        <span data-i18n>Notes &amp; Comments</span>
+        <span id="side-title" data-i18n>Notes &amp; Comments</span>
         <button id="side-pin" data-i18n-title title="Keep this pane open">&#9737;</button>
       </div>
-      <div id="sticky-list"></div>
+      <div id="side-tabs" role="tablist" aria-labelledby="side-title">
+        <button id="side-notes-tab" role="tab" data-side-tab="notes" aria-selected="true" aria-controls="sticky-list" data-i18n>Notes</button>
+        <button id="side-characters-tab" role="tab" data-side-tab="characters" aria-selected="false" aria-controls="character-notes" tabindex="-1" data-i18n>Characters</button>
+      </div>
+      <div id="sticky-list" role="tabpanel" aria-labelledby="side-notes-tab"></div>
+      <div id="character-notes" role="tabpanel" aria-labelledby="side-characters-tab" hidden></div>
     </aside>
 
     <!-- The manuscript -->
@@ -140,6 +145,7 @@
 
   <script src="i18n.js"></script>
   <script src="covers.js"></script>
+  <script src="characters.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

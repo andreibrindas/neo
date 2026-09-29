@@ -61,6 +61,7 @@ let currentTab = 'manuscript';
 let currentChapterId = null; // chapter the caret/scroll is in
 let wordMode = 'book';       // 'book' | 'chapter'
 let saveTimers = {};
+const expandedNotes = new Set(); // UI state only, retained while switching sidebar tabs
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => Array.from(document.querySelectorAll(sel));
@@ -120,6 +121,7 @@ const NO_HOVER = !!(window.matchMedia && window.matchMedia('(hover: none)').matc
 const K = (mac, pc) => (IS_MAC ? mac : pc);
 const KZ = K('⌘Z', 'Ctrl+Z');
 const KPH = K('⌘⇧X', 'Ctrl+Shift+X');
+const KCH = K('⌘⇧C', 'Ctrl+Shift+C');
 const KDA = K('⌘⇧D', 'Ctrl+Shift+D');
 const KHELP = K('⌘/', 'Ctrl+/');
 
@@ -359,10 +361,10 @@ async function shelfMeta(bookId) {
   if (meta) bookMetaCache.set(bookId, meta);
   return meta;
 }
-(() => {
-  const write = window.neo.writeBookMeta;
-  window.neo.writeBookMeta = (bookId, meta) => { bookMetaCache.delete(bookId); return write(bookId, meta); };
-})();
+function writeBookMeta(bookId, meta) {
+  bookMetaCache.delete(bookId);
+  return window.neo.writeBookMeta(bookId, meta);
+}
 
 async function renderShelves() {
   await NeoCovers.ready; // display faces, so titles measure true
@@ -726,7 +728,7 @@ function bookTile(meta) {
       if (fname) {
         meta.coverImage = fname;
         meta.coverMode = 'image';
-        await window.neo.writeBookMeta(meta.id, meta);
+        await writeBookMeta(meta.id, meta);
         renderShelves();
       }
     } else if (/\.(docx|txt|md)$/i.test(p)) {
@@ -777,20 +779,20 @@ function bookTile(meta) {
       if (fname) {
         meta.coverImage = fname;
         meta.coverMode = 'image';
-        await window.neo.writeBookMeta(meta.id, meta);
+        await writeBookMeta(meta.id, meta);
         renderShelves();
       }
     } else if (choice === 'uncover') {
       await window.neo.removeCover(meta.id);
       meta.coverImage = null;
-      await window.neo.writeBookMeta(meta.id, meta);
+      await writeBookMeta(meta.id, meta);
       renderShelves();
     } else if (choice === 'goal') {
       const goal = await askInput(t('Word count goal for “{title}”', { title: meta.title }), t('e.g. 80000 — blank removes the goal'),
         meta.wordGoal ? String(meta.wordGoal) : '');
       if (goal === null) return;
       meta.wordGoal = parseInt(goal, 10) || 0;
-      await window.neo.writeBookMeta(meta.id, meta);
+      await writeBookMeta(meta.id, meta);
       renderShelves();
     } else if (choice === 'remove') {
       for (const s of library.shelves) s.bookIds = s.bookIds.filter((b) => b !== meta.id);
@@ -843,7 +845,7 @@ async function requestPaint(meta, text) {
   }
   meta.coverArt = { status: 'pending', at: new Date().toISOString(), words: meta.wordCount || 0 };
   if (book && book.id === meta.id) scheduleMetaSave();
-  else await window.neo.writeBookMeta(meta.id, meta);
+  else await writeBookMeta(meta.id, meta);
   markPainting(meta.id, true);
   if (text == null) {
     const m = await window.neo.readBookMeta(meta.id);
@@ -876,7 +878,7 @@ async function requestPaint(meta, text) {
     toast(t('NEO couldn’t paint that cover: {error}', { error: live.coverArt.error }), 7000);
   }
   if (live === book) scheduleMetaSave();
-  else await window.neo.writeBookMeta(meta.id, live);
+  else await writeBookMeta(meta.id, live);
   markPainting(meta.id, false);
   if (!$('#bookshelf-view').hidden) renderShelves();
 }
@@ -923,7 +925,7 @@ async function refreshCover(meta, el) {
   } else {
     live.coverMode = choice;
   }
-  if (live === book) scheduleMetaSave(); else await window.neo.writeBookMeta(meta.id, live);
+  if (live === book) scheduleMetaSave(); else await writeBookMeta(meta.id, live);
   dressTile(el, live);
 }
 
@@ -933,7 +935,7 @@ async function createBookOnShelf(shelf) {
     notes: (library.tabDefaults && library.tabDefaults.notes) || 'Notes',
     outline: (library.tabDefaults && library.tabDefaults.outline) || 'Outline'
   };
-  await window.neo.writeBookMeta(meta.id, meta);
+  await writeBookMeta(meta.id, meta);
   shelf.bookIds.push(meta.id);
   await window.neo.writeLibrary(library);
   openBook(meta.id);
@@ -1074,7 +1076,7 @@ async function moveBookToAuthor(bookId, authorId) {
   for (const s of library.shelves) s.bookIds = s.bookIds.filter((b) => b !== bookId);
   shelf.bookIds.unshift(bookId); // the top shelf, first in line
   meta.author = target.name;
-  await window.neo.writeBookMeta(bookId, meta);
+  await writeBookMeta(bookId, meta);
   await window.neo.writeLibrary(library);
   renderShelves();
   toast(t('“{title}” now sits on {name}’s top shelf — Esc puts it back', { title: meta.title, name: target.name }), 6000);
@@ -1087,7 +1089,7 @@ async function undoShelfMove() {
   for (const s of library.shelves) s.bookIds = s.bookIds.filter((b) => b !== m.bookId);
   home.bookIds.splice(Math.min(m.index, home.bookIds.length), 0, m.bookId);
   const meta = await window.neo.readBookMeta(m.bookId);
-  if (meta) { meta.author = m.author; await window.neo.writeBookMeta(m.bookId, meta); }
+  if (meta) { meta.author = m.author; await writeBookMeta(m.bookId, meta); }
   await window.neo.writeLibrary(library);
   renderShelves();
   toast(t('“{title}” is back where it was', { title: m.title }));
@@ -1203,7 +1205,9 @@ async function openBook(bookId) {
   $$('.tab[data-tab="outline"]')[0].textContent = tabName('outline');
 
   renderChapters();
+  reconcileCharacterMarks();
   renderStickies();
+  switchSideTab('notes');
   migrateDarlingAnchors(); // sweep legacy invisible markers out of the prose
   reconcileMarks();        // re-adopt any note marks orphaned by cut/paste
   updateCounters();
@@ -1355,7 +1359,17 @@ async function chapterMenu(chId, index) {
 function wireChapterBody(body, chId) {
   body.addEventListener('focus', () => { currentChapterId = chId; updateCounters(); highlightNav(); });
 
-  body.addEventListener('input', () => {
+  body.addEventListener('input', (e) => {
+    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
+      reconcileCharacterMarks();
+      const sel = window.getSelection();
+      const el = sel.anchorNode?.nodeType === Node.TEXT_NODE ? sel.anchorNode.parentElement : sel.anchorNode;
+      const mark = el?.closest?.('.character-ref');
+      if (mark) caretAfterCharacter(mark);
+    }
+    if (!convertingCharacter) queueMicrotask(() => {
+      if (body.isConnected && expandCharacterReference(body, e)) syncChapter(body, chId);
+    });
     breakRun = 0; // fresh typing: ⌘Z belongs to the engine again
     chapterHTML[chId] = captureBody(body);
     wordCache[chId] = null;
@@ -1372,6 +1386,8 @@ function wireChapterBody(body, chId) {
     if (html) {
       document.execCommand('insertHTML', false, cleanPasteHtml(html));
       reconcileMarks();
+      reconcileCharacterMarks();
+      syncChapter(body, chId);
     } else if (text) {
       const parts = text.replace(/\r/g, '').split(/\n+/).filter((p) => p.trim());
       parts.forEach((p, i) => {
@@ -1383,7 +1399,11 @@ function wireChapterBody(body, chId) {
   // While macOS composes input, shortcuts stand down completely.
   let composing = false;
   body.addEventListener('compositionstart', () => { composing = true; });
-  body.addEventListener('compositionend', () => { composing = false; });
+  body.addEventListener('compositionend', () => {
+    composing = false;
+    expandCharacterReference(body, { inputType: 'insertCompositionText' });
+    syncChapter(body, chId);
+  });
   body.addEventListener('keydown', (e) => {
     if (composing || e.isComposing || e.keyCode === 229) return;
     // count consecutive Enters — the double/triple rhythm works mid-sentence
@@ -1406,10 +1426,12 @@ function wireChapterBody(body, chId) {
         (s && !s.isCollapsed && (e.key.length === 1 || e.key === 'Enter'));
       if (destructive) healSelectionSeams(body);
     }
+    if (finishCharacterBrackets(e, body)) return;
     if (styleKeepScroll(e)) return;
     if (handlePoetry(e, body, chId)) return;
     if (poetryBackspace(e, body, chId)) return;
     if (sceneBreakDelete(e, body, chId)) return;
+    if (deleteCharacterReference(e, body)) return;
     if (spaceSafeDelete(e, body, chId)) return;
     if (emptyChapterBackspace(e, body, chId)) return;
     if (chapterStartBackspace(e, body, chId)) return;
@@ -1426,6 +1448,8 @@ function wireChapterBody(body, chId) {
   body.addEventListener('click', (e) => {
     const mark = e.target.closest('.ph-mark');
     if (mark) focusSticky(mark.dataset.sid);
+    const character = e.target.closest('.character-ref');
+    if (character) { e.preventDefault(); focusCharacterNote(character); }
     // clicking a ghost outline note selects it, ready to be replaced with prose
     const ghost = e.target.closest('p.ghost');
     if (ghost) {
@@ -1730,7 +1754,7 @@ function guardMarkerDelete(e, body, chId) {
 // ("<span style='text-indent...'>"). They corrupt later edits — unwrap them,
 // keeping only NEO's own marks.
 function stripJunkSpans(el) {
-  for (const s of [...el.querySelectorAll('span:not(.ph-mark)')]) {
+  for (const s of [...el.querySelectorAll('span:not(.ph-mark):not(.character-ref)')]) {
     while (s.firstChild) s.before(s.firstChild);
     s.remove();
   }
@@ -1847,7 +1871,7 @@ function handleEnter(e, body, chId) {
     // normal Enter — native split so ⌘Z keeps working; junk spans (which
     // make the engine clone whole paragraphs) are stripped first if present
     e.preventDefault();
-    if (block.querySelector('span:not(.ph-mark)')) {
+    if (block.querySelector('span:not(.ph-mark):not(.character-ref)')) {
       // Unwrapping moves text nodes, so preserve the caret's text position.
       const caret = captureCaret();
       stripJunkSpans(block);
@@ -1952,7 +1976,7 @@ function handlePoetry(e, body, chId) {
 
   if (block.classList.contains('poetry')) {
     // the engine's own split keeps the class on the new line, and ⌘Z sees it
-    if (block.querySelector('span:not(.ph-mark)')) stripJunkSpans(block);
+    if (block.querySelector('span:not(.ph-mark):not(.character-ref)')) stripJunkSpans(block);
     document.execCommand('insertParagraph');
     const cur = caretBlock(body);
     if (cur) {
@@ -2176,8 +2200,8 @@ function cleanPasteHtml(html) {
   holder.querySelectorAll('br').forEach((br) => br.replaceWith(document.createTextNode(BREAK)));
 
   const paras = [[]];
-  for (const r of paraRuns(holder.innerHTML)) {
-    if (r.mark !== undefined) { paras[paras.length - 1].push(r); continue; }
+  for (const r of paraRuns(holder.innerHTML, true)) {
+    if (r.mark !== undefined || r.character) { paras[paras.length - 1].push(r); continue; }
     const pieces = r.text.split(BREAK);
     pieces.forEach((text, i) => {
       if (i > 0) paras.push([]);
@@ -2186,10 +2210,11 @@ function cleanPasteHtml(html) {
   }
   const out = paras.map((runs) => {
     // whitespace collapses like HTML's, and each paragraph is trimmed
-    runs = runs.map((r) => (r.mark !== undefined ? r : { ...r, text: r.text.replace(/\s+/g, ' ') }));
-    const first = runs.find((r) => r.mark === undefined);
+    runs = runs.map((r) => (r.mark !== undefined || r.character ? r : { ...r, text: r.text.replace(/\s+/g, ' ') }));
+    const first = runs[0]?.mark === undefined && !runs[0]?.character ? runs[0] : null;
     if (first) first.text = first.text.replace(/^\s+/, '');
-    const last = [...runs].reverse().find((r) => r.mark === undefined);
+    const lastRun = runs[runs.length - 1];
+    const last = lastRun?.mark === undefined && !lastRun?.character ? lastRun : null;
     if (last) last.text = last.text.replace(/\s+$/, '');
     const inner = runs.map((r) => {
       if (r.mark !== undefined) {
@@ -2200,7 +2225,7 @@ function cleanPasteHtml(html) {
           : '';
       }
       if (!r.text) return '';
-      let t = escHtml(r.text);
+      let t = r.character ? characterMarkup(r.character, r.text) : escHtml(r.text);
       if (r.i) t = '<i>' + t + '</i>';
       if (r.b) t = '<b>' + t + '</b>';
       return t;
@@ -2342,6 +2367,10 @@ document.addEventListener('keydown', (e) => {
   if ($('#editor-view').hidden) return;
   if (document.querySelector('.modal-backdrop:not([hidden])')) return; // visible modals own the keyboard
   const cmd = e.metaKey || e.ctrlKey;
+  if (cmd && e.shiftKey && !e.altKey && e.code === 'KeyC') {
+    e.preventDefault();
+    insertCharacterBrackets();
+  }
   if (cmd && e.shiftKey && e.code === 'KeyX') {
     e.preventDefault();
     if (currentTab === 'manuscript') insertPlaceholder();
@@ -2437,6 +2466,8 @@ function focusChapter(chId) {
 function insertPlaceholder() {
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
+  const character = characterAtCaret();
+  if (character) { focusCharacterNote(character); return; }
   // derive the chapter from where the caret actually is:
   let el = sel.anchorNode;
   if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
@@ -2506,6 +2537,7 @@ function returnToMark(sid) {
 function renderStickies() {
   const wrap = $('#sticky-list');
   wrap.innerHTML = '';
+  renderCharacterNotes();
   const open = stickies.filter((s) => !s.resolved);
   if (open.length === 0) {
     wrap.innerHTML = `<div class="stickies-empty">${t('No notes yet.')}<br><br>${t('Hit {key} while writing to drop a placeholder — a “come back to this” mark that never breaks your flow.', { key: KPH })}</div>`;
@@ -2538,8 +2570,53 @@ function renderStickies() {
     el.querySelector('.s-go').onclick = () => returnToMark(s.id);
     el.querySelector('.s-done').onclick = () => resolveSticky(s.id);
     wrap.appendChild(el);
+    wireNoteExpansion(ta, 'note:' + s.id);
   }
 }
+
+// Long notes have one explicit way to reveal their text. Both sidebar tabs
+// share the same control, and expanded notes keep fitting as they are edited.
+function wireNoteExpansion(textarea, noteId) {
+  const key = book.id + ':' + noteId;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'note-expand';
+  button.hidden = true;
+  textarea.id = 'note-text-' + crypto.randomUUID();
+  button.setAttribute('aria-controls', textarea.id);
+  button.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="m4 3 4 4 4-4M4 8l4 4 4-4" /></svg>';
+  textarea.after(button);
+  const update = () => {
+    if (!textarea.getClientRects().length) return; // measure after its tab is visible
+    textarea.style.height = '';
+    const collapsedHeight = textarea.offsetHeight;
+    const border = collapsedHeight - textarea.clientHeight;
+    const fullHeight = textarea.scrollHeight + border;
+    const overflows = !!textarea.value && fullHeight > collapsedHeight + 1;
+    const expanded = expandedNotes.has(key);
+    if (expanded) textarea.style.height = Math.max(collapsedHeight, fullHeight) + 'px';
+    button.hidden = !overflows;
+    button.setAttribute('aria-expanded', String(expanded));
+    const label = expanded ? t('Collapse note') : t('Expand note');
+    button.setAttribute('aria-label', label);
+    button.title = label;
+  };
+  button.onclick = () => {
+    if (expandedNotes.has(key)) expandedNotes.delete(key);
+    else expandedNotes.add(key);
+    update();
+    textarea.scrollTop = 0;
+  };
+  textarea.addEventListener('input', update);
+  textarea._refreshNoteSize = update;
+  requestAnimationFrame(update);
+}
+
+function refreshNoteSizes() {
+  $$('#side-pane textarea').forEach((textarea) => textarea._refreshNoteSize?.());
+}
+
+new ResizeObserver(refreshNoteSizes).observe($('#side-pane'));
 
 // Pair every mark in the manuscript with a note: pasted duplicates get their
 // own copy of the note, marks that moved chapters update their red dot, and
@@ -2605,6 +2682,7 @@ function resolveSticky(sid) {
 }
 
 function focusSticky(sid) {
+  switchSideTab('notes');
   $('#side-pane').classList.add('open');
   const el = document.querySelector(`.sticky[data-sid="${sid}"] textarea`);
   if (el) el.focus();
@@ -2764,12 +2842,44 @@ function scheduleNavRefresh() {
   saveTimers.nav = setTimeout(renderNav, 1200);
 }
 
+// Tabs live inside the hidden notes pane. The note shortcuts choose the
+// matching tab without adding a step to the writing workflow.
+function switchSideTab(name) {
+  const characters = name === 'characters';
+  $('#side-title').textContent = characters ? t('Characters') : t('Notes & Comments');
+  const pane = $('#side-pane');
+  if (pane.dataset.tab !== name) pane.scrollTop = 0;
+  pane.dataset.tab = name;
+  $('#sticky-list').hidden = characters;
+  $('#character-notes').hidden = !characters;
+  for (const tab of $$('#side-tabs [role="tab"]')) {
+    const selected = tab.dataset.sideTab === name;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+  requestAnimationFrame(refreshNoteSizes);
+}
+
+for (const tab of $$('#side-tabs [role="tab"]')) {
+  tab.onclick = () => { renderStickies(); switchSideTab(tab.dataset.sideTab); };
+  tab.onkeydown = (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const name = e.key === 'Home' ? 'notes' : e.key === 'End' ? 'characters' :
+      tab.dataset.sideTab === 'notes' ? 'characters' : 'notes';
+    renderStickies();
+    switchSideTab(name);
+    document.querySelector('#side-tabs [data-side-tab="' + name + '"]').focus();
+  };
+}
+
 // Hover behavior for both side panes:
 function wireHoverPane(hotzone, pane, isPinnable) {
   const pinned = () => (isPinnable && pane.dataset.pinned === '1') ||
     (pane.id === 'nav-pane' && chapterDragActive);
   hotzone.addEventListener('mouseenter', (e) => {
     if (e.buttons) return; // dragging something — stand down
+    if (pane.id === 'side-pane') renderStickies();
     pane.classList.add('open');
   });
   hotzone.addEventListener('mouseleave', (e) => {
@@ -3096,6 +3206,339 @@ function switchTab(name) {
       returnTo();
     });
   }
+}
+
+/* ================================================================== */
+/*  CHARACTER NOTES — explicit [[references]], shared margin notes     */
+/* ================================================================== */
+
+let convertingCharacter = false;
+let characterReturnRange = null;
+let namingCharacter = false;
+
+function insertCharacterBrackets() {
+  if (!book || currentTab !== 'manuscript') return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return;
+  const caret = sel.getRangeAt(0);
+  const el = caret.startContainer.nodeType === Node.TEXT_NODE ? caret.startContainer.parentElement : caret.startContainer;
+  const body = el.closest('.chapter-body');
+  if (!body || !body.contains(caret.endContainer)) return;
+  const selected = sel.toString();
+  document.execCommand('insertText', false, '[[' + selected + ']]');
+  if (selected) return;
+  const end = sel.getRangeAt(0);
+  const paragraph = (end.startContainer.nodeType === Node.TEXT_NODE ? end.startContainer.parentElement : end.startContainer).closest('p');
+  if (!paragraph) return;
+  const prefix = document.createRange();
+  prefix.selectNodeContents(paragraph);
+  prefix.setEnd(end.startContainer, end.startOffset);
+  const middle = textPosToRange(paragraph, prefix.toString().length - 2);
+  if (middle) { sel.removeAllRanges(); sel.addRange(middle); }
+}
+
+// Skip the closing brackets inserted by the shortcut, or finish with Tab.
+function finishCharacterBrackets(e, body) {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing || e.shiftKey || !['Tab', ']'].includes(e.key)) return false;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return false;
+  const caret = sel.getRangeAt(0);
+  const paragraph = (caret.startContainer.nodeType === Node.TEXT_NODE ? caret.startContainer.parentElement : caret.startContainer).closest('p');
+  if (!paragraph || !body.contains(paragraph)) return false;
+  const prefix = document.createRange();
+  prefix.selectNodeContents(paragraph);
+  prefix.setEnd(caret.startContainer, caret.startOffset);
+  const before = prefix.toString();
+  const after = paragraph.textContent.slice(before.length);
+  const closing = after.startsWith(']]') ? ']]' : after.startsWith(']') ? ']' : '';
+  if (!closing || !NeoCharacters.endingToken(before + closing)) return false;
+  e.preventDefault();
+  const end = textPosToRange(paragraph, before.length + (e.key === 'Tab' ? closing.length : 1));
+  sel.removeAllRanges(); sel.addRange(end);
+  expandCharacterReference(body, { inputType: 'insertText' });
+  syncChapter(body, body.closest('.chapter').dataset.id);
+  return true;
+}
+
+function deleteCharacterReference(e, body) {
+  if (!['Backspace', 'Delete'].includes(e.key) || e.metaKey || e.ctrlKey || e.altKey) return false;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return false;
+  const r = sel.getRangeAt(0), node = r.startContainer;
+  const back = e.key === 'Backspace';
+  let adjacent = null;
+  if (node.nodeType === Node.TEXT_NODE) {
+    if (back && r.startOffset === 0) adjacent = node.previousSibling;
+    if (!back && r.startOffset === node.length) adjacent = node.nextSibling;
+  } else adjacent = node.childNodes[r.startOffset - (back ? 1 : 0)];
+  while (adjacent?.nodeType === Node.TEXT_NODE && !adjacent.data) adjacent = back ? adjacent.previousSibling : adjacent.nextSibling;
+  if (!adjacent?.classList?.contains('character-ref') || !body.contains(adjacent)) return false;
+  e.preventDefault();
+  const del = document.createRange();
+  del.selectNode(adjacent);
+  sel.removeAllRanges(); sel.addRange(del);
+  document.execCommand('delete'); // native undo restores the reference and its identity
+  return true;
+}
+
+function characterMarks(id) {
+  return $$('.chapter-body .character-ref').filter((mark) => !id || mark.dataset.characterId === id);
+}
+
+function caretAfterCharacter(mark) {
+  const after = document.createTextNode('');
+  mark.after(after);
+  const next = document.createRange(); next.setStart(after, 0); next.collapse(true);
+  const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(next);
+}
+
+function characterMarkup(character, text = character.name || character.handle) {
+  return `<a class="character-ref" data-character-id="${escHtml(character.id)}" data-character-handle="${escHtml(character.handle)}" href="#neo-character">${escHtml(text)}</a>`;
+}
+
+function expandCharacterReference(body, event) {
+  if (convertingCharacter || event.isComposing || !event.inputType?.startsWith('insert') ||
+      typeof NeoCharacters === 'undefined') return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !sel.isCollapsed) return;
+  const caret = sel.getRangeAt(0);
+  const el = caret.startContainer.nodeType === Node.TEXT_NODE ? caret.startContainer.parentElement : caret.startContainer;
+  const paragraph = el.closest('p');
+  if (!paragraph || !body.contains(paragraph) || el.closest('.character-ref, .ph-mark, .ghost')) return;
+  const before = document.createRange();
+  before.selectNodeContents(paragraph);
+  before.setEnd(caret.startContainer, caret.startOffset);
+  const token = NeoCharacters.endingToken(before.toString());
+  if (!token) return;
+  const start = textPosToRange(paragraph, token.start);
+  if (!start) return;
+  start.setEnd(caret.startContainer, caret.startOffset);
+  // Never absorb an existing reference or a line break into a new one.
+  if (start.cloneContents().querySelector('.character-ref, .ph-mark, br')) return;
+  book.characters = book.characters || [];
+  let character = book.characters.find((c) => c.handle === token.handle) ||
+    book.characters.find((c) => c.name === token.handle);
+  if (!character) {
+    character = { id: crypto.randomUUID(), handle: token.handle, name: '', notes: '' };
+    book.characters.push(character);
+    scheduleMetaSave();
+  }
+  convertingCharacter = true;
+  try {
+    sel.removeAllRanges();
+    sel.addRange(start);
+    // A native link preserves identity and stays inline during insertion.
+    // Remove its temporary href immediately; it never navigates anywhere.
+    const html = characterMarkup(character);
+    document.execCommand('insertHTML', false, html);
+    const mark = body.querySelector('a[href="#neo-character"]');
+    if (mark) {
+      mark.removeAttribute('href');
+      mark.contentEditable = 'false';
+      caretAfterCharacter(mark);
+    }
+
+  } finally { convertingCharacter = false; }
+  // The browser keeps the caret after the reference. No panel or focus change.
+  return true;
+}
+
+// References retain their identity through chapter splits, cut/paste and undo.
+// A reference pasted from another book can be adopted without losing its words.
+function reconcileCharacterMarks() {
+  if (!book) return;
+  const marks = characterMarks();
+  if (!marks.length) return;
+  book.characters = book.characters || [];
+  let changed = false;
+  for (const mark of marks) {
+    const handle = mark.dataset.characterHandle || mark.textContent;
+    let character = book.characters.find((c) => c.id === mark.dataset.characterId) ||
+      book.characters.find((c) => c.handle === handle);
+    if (!character) {
+      character = { id: mark.dataset.characterId || crypto.randomUUID(), handle,
+        name: mark.textContent === handle ? '' : mark.textContent, notes: '' };
+      book.characters.push(character);
+      changed = true;
+    }
+    mark.dataset.characterId = character.id;
+    mark.dataset.characterHandle = character.handle;
+    mark.contentEditable = 'false';
+    mark.removeAttribute('href');
+    // Keep the text the writer pasted; only an explicit rename changes words.
+  }
+  if (changed) scheduleMetaSave();
+}
+
+function characterAtCaret() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  const el = r.startContainer.nodeType === Node.TEXT_NODE ? r.startContainer.parentElement : r.startContainer;
+  const body = el.closest('.chapter-body');
+  if (!body) return null;
+  if (el.closest('.character-ref')) return el.closest('.character-ref');
+  if (!r.collapsed) {
+    const marks = [...body.querySelectorAll('.character-ref')].filter((m) => r.intersectsNode(m));
+    return marks.length === 1 ? marks[0] : null;
+  }
+  // On either side of a name, optionally separated by spaces/punctuation.
+  const paragraph = el.closest('p');
+  if (!paragraph) return null;
+  const before = document.createRange();
+  before.selectNodeContents(paragraph);
+  before.setEnd(r.startContainer, r.startOffset);
+  const at = before.toString().length;
+  const candidates = [...paragraph.querySelectorAll('.character-ref')].map((mark) => {
+    const prefix = document.createRange();
+    prefix.selectNodeContents(paragraph);
+    prefix.setEndBefore(mark);
+    const start = prefix.toString().length;
+    return { mark, start, end: start + mark.textContent.length };
+  });
+  const previous = candidates.filter((m) => m.end <= at).pop();
+  if (previous && /^[\s.,!?;:’'”"]{0,3}$/.test(paragraph.textContent.slice(previous.end, at))) return previous.mark;
+  return candidates.find((m) => m.start === at)?.mark || null;
+}
+
+function focusCharacterNote(mark) {
+  reconcileCharacterMarks();
+  const sel = window.getSelection();
+  // Preserve the exact writing position for Enter/Escape to return to.
+  characterReturnRange = sel.rangeCount && mark.closest('.chapter-body').contains(sel.anchorNode)
+    ? sel.getRangeAt(0).cloneRange() : null;
+  if (!characterReturnRange) {
+    characterReturnRange = document.createRange();
+    characterReturnRange.setStartAfter(mark);
+    characterReturnRange.collapse(true);
+  }
+  const pane = $('#side-pane');
+  pane.dataset.autoOpened = pane.classList.contains('open') ? '0' : '1';
+  switchSideTab('characters');
+  pane.classList.add('open');
+  renderCharacterNotes();
+  const card = [...$('#character-notes').children].find((el) => el.dataset.characterId === mark.dataset.characterId);
+  if (card) {
+    card.scrollIntoView({ block: 'nearest' });
+    card.querySelector('textarea').focus({ preventScroll: true });
+  }
+}
+
+function returnFromCharacterNote() {
+  const range = characterReturnRange;
+  if (!range || !range.startContainer.isConnected) return;
+  const el = range.startContainer.nodeType === Node.TEXT_NODE ? range.startContainer.parentElement : range.startContainer;
+  const body = el.closest('.chapter-body');
+  if (!body) return;
+  if (currentTab !== 'manuscript') switchTab('manuscript');
+  body.focus({ preventScroll: true });
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+  const pane = $('#side-pane');
+  if (pane.dataset.autoOpened === '1' && pane.dataset.pinned !== '1') pane.classList.remove('open');
+  pane.dataset.autoOpened = '0';
+}
+
+function renderCharacterNotes() {
+  const wrap = $('#character-notes');
+  if (wrap.contains(document.activeElement)) return; // don't disturb a note being written
+  wrap.replaceChildren();
+  if (!book?.characters?.length) {
+    wrap.innerHTML = `<div class="stickies-empty">${escHtml(t('No character notes yet.'))}<br><br>${escHtml(t('Type [[C]] or use {key} to link a character note.', { key: KCH }))}</div>`;
+    return;
+  }
+  for (const character of book.characters) {
+    const marks = characterMarks(character.id);
+    const card = document.createElement('div');
+    card.className = 'sticky character-note';
+    card.dataset.characterId = character.id;
+    card.innerHTML = `
+      <div class="s-ch"></div>
+      <label class="character-name-label">${escHtml(t('Name'))}<input class="character-name" spellcheck="false" /></label>
+      <textarea spellcheck="false" aria-label="${escHtml(t('Character notes'))}" placeholder="${escHtml(t('What do you want to remember?'))}"></textarea>
+      <div class="character-key-hint">${escHtml(t('Enter to return · Shift+Tab to name'))}</div>
+      <details class="character-places"><summary></summary><div></div></details>`;
+    card.querySelector('.s-ch').textContent = '[[' + character.handle + ']]';
+    const name = card.querySelector('input');
+    name.value = character.name || '';
+    name.placeholder = character.handle;
+    name.setAttribute('aria-label', t('Character name'));
+    const notes = card.querySelector('textarea');
+    notes.value = character.notes || '';
+    notes.oninput = () => { character.notes = notes.value; scheduleMetaSave(); };
+    notes.onkeydown = (e) => {
+      if ((e.key === 'Enter' && !e.shiftKey && !e.isComposing) || e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation(); returnFromCharacterNote();
+      }
+    };
+    // Enter applies a name to every linked occurrence, then resumes writing.
+    name.onkeydown = async (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation(); name.value = character.name || ''; returnFromCharacterNote();
+      } else if (e.key === 'Enter' && !e.isComposing) {
+        e.preventDefault(); e.stopPropagation();
+        if (await renameCharacter(character, name.value.trim())) returnFromCharacterNote();
+      }
+    };
+    name.onblur = () => { name.value = character.name || ''; };
+    const places = card.querySelector('.character-places');
+    places.querySelector('summary').textContent = t('{n} mentions', { n: marks.length });
+    for (const mark of marks) {
+      const chId = mark.closest('.chapter').dataset.id;
+      const jump = document.createElement('button');
+      jump.textContent = t('Chapter {n}', { n: book.chapterOrder.indexOf(chId) + 1 });
+      const p = mark.closest('p');
+      if (p) jump.title = p.textContent;
+      jump.onclick = () => {
+        characterReturnRange = document.createRange();
+        characterReturnRange.selectNode(mark);
+        returnFromCharacterNote();
+        mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      };
+      places.querySelector('div').appendChild(jump);
+    }
+    wrap.appendChild(card);
+    wireNoteExpansion(notes, 'character:' + character.id);
+  }
+}
+
+async function renameCharacter(character, name) {
+  if (namingCharacter) return false;
+  if (name === character.name) return true;
+  const activeBook = book;
+  const marks = characterMarks(character.id);
+  const originals = new Map();
+  for (const mark of marks) {
+    const paragraph = mark.closest('p') || mark.closest('.chapter-body');
+    if (originals.has(paragraph)) continue;
+    const chId = mark.closest('.chapter').dataset.id;
+    originals.set(paragraph, { id: 'd-' + crypto.randomUUID(), html: paragraph.outerHTML,
+      text: paragraph.textContent, chapterId: chId,
+      chapterLabel: t('Chapter {n}', { n: book.chapterOrder.indexOf(chId) + 1 }), date: new Date().toISOString() });
+  }
+  const recovered = [...darlings, ...originals.values()];
+  namingCharacter = true;
+  try {
+    await window.neo.writeJSON(book.id, 'darlings', recovered);
+    if (book !== activeBook) return false;
+    if ([...originals].some(([p, original]) => !p.isConnected || p.outerHTML !== original.html)) return false;
+    snapshotStructure('character name', { characterNames: true });
+    darlings = recovered;
+    character.name = name;
+    for (const mark of marks) mark.textContent = name || character.handle;
+    for (const chId of new Set(marks.map((m) => m.closest('.chapter').dataset.id))) {
+      syncChapter(document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`), chId);
+    }
+    scheduleMetaSave();
+    // The next Cmd+Z belongs to this rename, just as it does to a chapter split.
+    breakRun = 1;
+    return true;
+  } catch (err) {
+    console.error(err);
+    toast(t('Could not save the original passages. The manuscript is unchanged.'));
+    return false;
+  } finally { namingCharacter = false; }
 }
 
 /* ================================================================== */
@@ -3638,7 +4081,7 @@ function scheduleMetaSave() {
 async function saveMeta() {
   if (!book) return;
   const sig = metaSig(book);
-  const stamp = await window.neo.writeBookMeta(book.id, book);
+  const stamp = await writeBookMeta(book.id, book);
   if (book && typeof stamp === 'string') book.modified = stamp;
   savedMetaSig = sig;
 }
@@ -3756,6 +4199,7 @@ async function refreshFromDisk() {
       if (caret) restoreCaret(caret);
       updateCounters();
       scheduleNavRefresh();
+      renderCharacterNotes();
       if (conflicts) toast(t('This chapter also changed on another device. That version is saved as the chapter after it.'), 8000);
       else toast(t('Updated from your other device'));
     }
@@ -3882,6 +4326,7 @@ function snapshotStructure(label, opts) {
   undoStack.push({
     label,
     rejoin: !!(opts && opts.rejoin),
+    characterNames: opts?.characterNames ? Object.fromEntries((book.characters || []).map((c) => [c.id, c.name])) : null,
     caret: captureCaret(),
     chapterOrder: [...book.chapterOrder],
     chapterHTML: { ...chapterHTML },
@@ -3902,6 +4347,9 @@ async function structuralUndo() {
   book.chapterTitles = snap.chapterTitles;
   book.chapterNotes = snap.chapterNotes;
   book.sectionNotes = snap.sectionNotes;
+  if (snap.characterNames) {
+    for (const c of book.characters || []) if (Object.hasOwn(snap.characterNames, c.id)) c.name = snap.characterNames[c.id];
+  }
   darlings = snap.darlings;
   stickies = snap.stickies;
   // resurrect any chapter files the action may have deleted
@@ -3916,6 +4364,7 @@ async function structuralUndo() {
   renderStickies();
   if (currentTab === 'darlings') renderDarlings();
   if (currentTab === 'outline') renderOutline();
+  renderCharacterNotes();
   updateCounters();
   restoreCaret(snap.caret); // back to work, no announcement
   if (snap.rejoin) rejoinAtCaret();
@@ -4194,7 +4643,7 @@ async function addImportedBooks(results, shelf) {
       for (const p of ch.paras) words += countWords(p.text || '');
     }
     meta.wordCount = words;
-    await window.neo.writeBookMeta(meta.id, meta);
+    await writeBookMeta(meta.id, meta);
     shelf.bookIds.push(meta.id);
     ok++;
   }
@@ -5003,13 +5452,13 @@ function shortcutSections() {
       [tk('Enter ×3'), tk('Start a new chapter')],
       [K('⇧Enter', 'Shift+Enter'), tk('Start or continue a poetry paragraph'), tk('Also works from a chapter heading.')],
       [KPH, tk('Insert a placeholder note')],
+      [[KCH, '[[C]]'], tk('Link a character note'), tk('Closing the brackets leaves only the name. Use the note shortcut beside it to write a shared note.')],
       [KDA, tk('Move selected text to Darlings')]
     ] },
     { title: tk('Formatting'), rows: [
       [K('⌘B', 'Ctrl+B'), tk('Bold')],
       [K('⌘I', 'Ctrl+I'), tk('Italic')],
       [K('⌘⇧L', 'Ctrl+Shift+L'), tk('Align paragraph left')],
-      [K('⌘⇧C', 'Ctrl+Shift+C'), tk('Center paragraph')],
       [K('⌘⇧R', 'Ctrl+Shift+R'), tk('Align paragraph right')],
       [K('⌘⇧J', 'Ctrl+Shift+J'), tk('Justify paragraph')],
       [K('⌘+', 'Ctrl++'), tk('Larger text')],
@@ -5301,7 +5750,7 @@ const escXml = (s) => String(s)
   .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 
 // Walk a paragraph's DOM and emit [{text, b, i}] so docx/epub get real bold/italic
-function paraRuns(pHtml) {
+function paraRuns(pHtml, preserveCharacters = false) {
   const holder = document.createElement('div');
   holder.innerHTML = pHtml;
   const runs = [];
@@ -5312,6 +5761,10 @@ function paraRuns(pHtml) {
       } else if (child.nodeType === Node.ELEMENT_NODE) {
         if (child.classList && child.classList.contains('ph-mark')) {
           runs.push({ mark: child.dataset.sid || '' });
+          continue;
+        }
+        if (preserveCharacters && child.classList.contains('character-ref')) {
+          runs.push({ character: { id: child.dataset.characterId || '', handle: child.dataset.characterHandle || child.textContent }, text: child.textContent, b, i });
           continue;
         }
         const tag = child.tagName;
@@ -5839,6 +6292,7 @@ window.neo.onMenu(async (msg) => {
     if (window.neo.writingStyleState) window.neo.writingStyleState(library.writingStyle);
   }
   if (msg.type === 'coverArt') openCoverArt();
+  if (msg.type === 'characterReference') insertCharacterBrackets();
   if (msg.type === 'align') {
     applyAlign(msg.value);
   }
