@@ -132,5 +132,13 @@
   "Toggle typewriter scrolling": "Deslocamento de máquina de escrever",
   "Hide other apps": "Ocultar as outras aplicações",
   "Chapter Titles Only": "Apenas títulos dos capítulos",
-  "Off → paragraph → sentence → off.": "Desligado → parágrafo → frase → desligado."
+  "Off → paragraph → sentence → off.": "Desligado → parágrafo → frase → desligado.",
+  "Character name": "Nome da personagem",
+  "Character notes": "Notas da personagem",
+  "Character reference": "Referência a uma personagem",
+  "Closing the brackets leaves only the name. Use the note shortcut beside it to write a shared note.": "Ao fechar os parênteses retos, fica apenas o nome. Com o cursor ao lado dele, use o atalho de notas para escrever uma nota partilhada.",
+  "Could not save the original passages. The manuscript is unchanged.": "Não foi possível guardar os excertos originais. O manuscrito não foi alterado.",
+  "Link a character note": "Associar uma nota à personagem",
+  "Type [[C]] or use {key} to link a character note.": "Escreva [[C]] ou use {key} para associar uma nota à personagem.",
+  "What do you want to remember?": "O que quer recordar?"
 }

@@ -10,6 +10,10 @@
     "one": "{n} chapter",
     "other": "{n} chapters"
   },
+  "{n} mentions": {
+    "one": "{n} mention",
+    "other": "{n} mentions"
+  },
   "{n} words": {
     "one": "{n} word",
     "other": "{n} words"

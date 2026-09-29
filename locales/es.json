@@ -489,5 +489,23 @@
   "Control": "Control",
   "or": "o",
   "Chapter Titles Only": "Solo títulos de capítulos",
-  "Keyboard Shortcuts…": "Atajos de teclado…"
+  "Keyboard Shortcuts…": "Atajos de teclado…",
+  "{n} mentions": {
+    "one": "{n} mención",
+    "other": "{n} menciones"
+  },
+  "Character name": "Nombre del personaje",
+  "Character notes": "Notas del personaje",
+  "Character reference": "Referencia a un personaje",
+  "Characters": "Personajes",
+  "Closing the brackets leaves only the name. Use the note shortcut beside it to write a shared note.": "Al cerrar los corchetes, solo queda el nombre. Con el cursor junto a él, usa el atajo de notas para escribir una nota compartida.",
+  "Collapse note": "Contraer nota",
+  "Could not save the original passages. The manuscript is unchanged.": "No se pudieron guardar los pasajes originales. El manuscrito no ha cambiado.",
+  "Enter to return · Shift+Tab to name": "Intro para volver · Mayús+Tab para ir al nombre",
+  "Expand note": "Expandir nota",
+  "Link a character note": "Vincular una nota de personaje",
+  "Name": "Nombre",
+  "No character notes yet.": "Todavía no hay notas de personajes.",
+  "Type [[C]] or use {key} to link a character note.": "Escribe [[C]] o usa {key} para vincular una nota de personaje.",
+  "What do you want to remember?": "¿Qué quieres recordar?"
 }
